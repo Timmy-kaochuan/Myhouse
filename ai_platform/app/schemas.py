@@ -11,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # ---------- 状态/类型常量（API 校验用） ----------
 Role = Literal["admin", "engineer", "viewer"]
-DesignCaseStatus = Literal["draft", "running", "finished", "archived"]
+CaseVersionStatus = Literal["draft", "running", "finished", "archived"]
+ArtifactType = Literal["mesh", "result", "weight", "dataset", "other"]
 CfdTaskStatus = Literal["pending", "running", "success", "failed", "stop"]
 ProxyModelType = Literal["kriging", "gp", "mlp", "mf_adaptive"]  # mf_adaptive=多保真自适应采样
 ProxyModelStatus = Literal["draft", "training", "ready", "failed"]
@@ -48,22 +49,20 @@ class UserOut(BaseModel):
     created_at: datetime
 
 
-# ==================== DesignCase ====================
+# ==================== DesignCase（主档） ====================
 class DesignCaseCreate(BaseModel):
     case_name: str = Field(max_length=200)
-    case_version: str = Field(default="v1", max_length=50)
     description: str | None = None
-    design_parameters: JsonDict | None = None
-    status: DesignCaseStatus = "draft"
+    parent_case_id: int | None = None
     creator_id: int
+    # 创建主档时自动生成 v1 版本，可带初始设计参数
+    design_parameters: JsonDict | None = None
 
 
 class DesignCaseUpdate(BaseModel):
     case_name: str | None = Field(default=None, max_length=200)
-    case_version: str | None = Field(default=None, max_length=50)
     description: str | None = None
-    design_parameters: JsonDict | None = None
-    status: DesignCaseStatus | None = None
+    parent_case_id: int | None = None
 
 
 class DesignCaseOut(BaseModel):
@@ -71,24 +70,77 @@ class DesignCaseOut(BaseModel):
 
     id: int
     case_name: str
-    case_version: str
     description: str | None
-    design_parameters: JsonDict | None
-    status: str
+    parent_case_id: int | None
     creator_id: int
     created_at: datetime
     updated_at: datetime
 
 
+# ==================== CaseVersion ====================
+class CaseVersionCreate(BaseModel):
+    case_id: int
+    version_no: str = Field(default="v1", max_length=50)
+    status: CaseVersionStatus = "draft"
+    design_parameters: JsonDict | None = None
+    description: str | None = None
+
+
+class CaseVersionUpdate(BaseModel):
+    version_no: str | None = Field(default=None, max_length=50)
+    status: CaseVersionStatus | None = None
+    design_parameters: JsonDict | None = None
+    description: str | None = None
+
+
+class CaseVersionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    case_id: int
+    version_no: str
+    status: str
+    design_parameters: JsonDict | None
+    description: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ==================== CaseArtifact ====================
+class CaseArtifactCreate(BaseModel):
+    case_version_id: int
+    artifact_type: ArtifactType
+    file_key: str = Field(max_length=500)
+    description: str | None = None
+
+
+class CaseArtifactUpdate(BaseModel):
+    artifact_type: ArtifactType | None = None
+    file_key: str | None = Field(default=None, max_length=500)
+    description: str | None = None
+
+
+class CaseArtifactOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    case_version_id: int
+    artifact_type: str
+    file_key: str
+    description: str | None
+    created_at: datetime
+
+
 # ==================== CfdTask ====================
 class CfdTaskCreate(BaseModel):
-    case_id: int
+    case_version_id: int
     task_name: str = Field(max_length=200)
     task_type: str = Field(max_length=50, description="如 flow/combustion/heat/cooling")
     input_params: JsonDict | None = None
     max_iter: int = Field(default=100, ge=1)
     converge_criteria: JsonDict | None = None
     proxy_model_id: int | None = None
+    input_artifact_id: int | None = None
     mesh_file_key: str | None = Field(default=None, max_length=500)
     celery_task_id: str | None = Field(default=None, max_length=100)
 
@@ -103,6 +155,7 @@ class CfdTaskUpdate(BaseModel):
     converge_criteria: JsonDict | None = None
     status: CfdTaskStatus | None = None
     error_msg: str | None = None
+    input_artifact_id: int | None = None
     mesh_file_key: str | None = Field(default=None, max_length=500)
     result_file_key: str | None = Field(default=None, max_length=500)
     proxy_model_id: int | None = None
@@ -115,7 +168,8 @@ class CfdTaskOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    case_id: int
+    case_version_id: int
+    input_artifact_id: int | None
     task_name: str
     task_type: str
     input_params: JsonDict | None

@@ -4,6 +4,8 @@
 """
 from app.db.base import Base
 from app.models.agent_run import AgentRun
+from app.models.case_artifact import CaseArtifact
+from app.models.case_version import CaseVersion
 from app.models.cfd_task import CfdTask
 from app.models.design_case import DesignCase
 from app.models.experiment_record import ExperimentRecord
@@ -14,6 +16,8 @@ __all__ = [
     "Base",
     "User",
     "DesignCase",
+    "CaseVersion",
+    "CaseArtifact",
     "ProxyModel",
     "CfdTask",
     "AgentRun",

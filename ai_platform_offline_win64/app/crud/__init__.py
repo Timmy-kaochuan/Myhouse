@@ -10,7 +10,25 @@ from app.crud.agent_run import (
     list_agent_runs,
     update_agent_run,
 )
+from app.crud.case_artifact import (
+    create_case_artifact,
+    delete_case_artifact,
+    get_case_artifact,
+    list_case_artifacts,
+    update_case_artifact,
+)
+from app.crud.case_version import (
+    create_case_version,
+    delete_case_version,
+    get_case_version,
+    get_downstream_version_ids,
+    get_upstream_version_ids,
+    get_version_by_no,
+    list_case_versions,
+    update_case_version,
+)
 from app.crud.cfd_task import (
+    artifact_creates_cycle,
     create_cfd_task,
     delete_cfd_task,
     get_cfd_task,
@@ -50,9 +68,17 @@ from app.crud.user import (
 __all__ = [
     # user
     "create_user", "get_user", "get_user_by_email", "list_users", "update_user", "delete_user",
-    # design_case
+    # design_case（主档）
     "create_design_case", "get_design_case", "list_design_cases", "update_design_case", "delete_design_case",
-    # cfd_task
+    # case_version（版本 + 血缘）
+    "create_case_version", "get_case_version", "get_version_by_no", "list_case_versions",
+    "update_case_version", "delete_case_version",
+    "get_upstream_version_ids", "get_downstream_version_ids",
+    # case_artifact（产物）
+    "create_case_artifact", "get_case_artifact", "list_case_artifacts",
+    "update_case_artifact", "delete_case_artifact",
+    # cfd_task（含依赖环检测）
+    "artifact_creates_cycle",
     "create_cfd_task", "get_cfd_task", "list_cfd_tasks", "update_cfd_task", "delete_cfd_task",
     # proxy_model
     "create_proxy_model", "get_proxy_model", "list_proxy_models", "update_proxy_model", "delete_proxy_model",

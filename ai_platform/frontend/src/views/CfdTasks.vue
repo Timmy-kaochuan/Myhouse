@@ -1,23 +1,44 @@
-<!-- CFD 任务监控：表格（迭代进度/状态）+ 过滤 + 分页 + 新建/编辑 Dialog + 删除确认 -->
+<!-- CFD 任务监控：任务挂算例版本、可选引用上游产物；表格（迭代进度/状态）+ 过滤 + 分页 + 新建/编辑 Dialog + 删除确认 -->
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { crud } from '../api'
 import { usePagedList } from '../composables/usePagedList'
-import { CFD_STATUS_LABEL, CFD_STATUS_TAG, CFD_TASK_STATUS } from '../constants'
+import { ARTIFACT_TYPE_LABEL, CFD_STATUS_LABEL, CFD_STATUS_TAG, CFD_TASK_STATUS } from '../constants'
 import { fmtTime, toJsonOrNull, toJsonText } from '../utils/format'
 
 const api = crud('cfd-tasks')
 const casesApi = crud('design-cases')
+const versionsApi = crud('case-versions')
+const artifactsApi = crud('case-artifacts')
 const proxyApi = crud('proxy-models')
 
 const { loading, items, total, query, filters, currentPage, load, search, resetFilters, onPageChange, onSizeChange, removeItem } =
-  usePagedList(api, { case_id: '', status: '' }, { deleteLabel: (row) => row.task_name })
+  usePagedList(api, { case_version_id: '', status: '' }, { deleteLabel: (row) => row.task_name })
 
-// 算例 / 代理模型下拉
+// 主档 / 版本 / 产物 / 代理模型数据
 const cases = ref([])
+const versions = ref([])
+const artifacts = ref([])
 const proxies = ref([])
+
 const caseMap = computed(() => Object.fromEntries(cases.value.map((c) => [c.id, c.case_name])))
+const versionMap = computed(() =>
+  Object.fromEntries(versions.value.map((v) => [v.id, `${caseMap.value[v.case_id] || v.case_id}(${v.version_no})`])),
+)
+const versionOptions = computed(() =>
+  versions.value
+    .map((v) => ({ id: v.id, label: versionMap.value[v.id], caseId: v.case_id }))
+    .sort((a, b) => String(a.label).localeCompare(String(b.label), 'zh-CN')),
+)
+const artifactOptions = computed(() =>
+  artifacts.value.map((a) => ({
+    id: a.id,
+    label: `${versionMap.value[a.case_version_id] || a.case_version_id} · ${ARTIFACT_TYPE_LABEL[a.artifact_type] || a.artifact_type}`,
+    fileKey: a.file_key,
+  })),
+)
+const artifactMap = computed(() => Object.fromEntries(artifactOptions.value.map((a) => [a.id, a.label])))
 const proxyMap = computed(() => Object.fromEntries(proxies.value.map((p) => [p.id, `${p.model_name}(${p.model_version})`])))
 
 // 迭代进度
@@ -38,7 +59,8 @@ const isEdit = ref(false)
 const editingId = ref(null)
 const formRef = ref()
 const form = reactive({
-  case_id: '',
+  case_version_id: '',
+  input_artifact_id: '',
   task_name: '',
   task_type: 'flow',
   max_iter: 100,
@@ -55,7 +77,7 @@ const form = reactive({
   error_msg: '',
 })
 const rules = {
-  case_id: [{ required: true, message: '请选择所属算例', trigger: 'change' }],
+  case_version_id: [{ required: true, message: '请选择所属算例版本', trigger: 'change' }],
   task_name: [{ required: true, message: '请输入任务名称', trigger: 'blur' }],
   task_type: [{ required: true, message: '请输入任务类型', trigger: 'blur' }],
   max_iter: [{ required: true, message: '请输入最大迭代数', trigger: 'blur' }],
@@ -65,7 +87,8 @@ function openCreate() {
   isEdit.value = false
   editingId.value = null
   Object.assign(form, {
-    case_id: '',
+    case_version_id: '',
+    input_artifact_id: '',
     task_name: '',
     task_type: 'flow',
     max_iter: 100,
@@ -87,7 +110,8 @@ function openEdit(row) {
   isEdit.value = true
   editingId.value = row.id
   Object.assign(form, {
-    case_id: row.case_id,
+    case_version_id: row.case_version_id,
+    input_artifact_id: row.input_artifact_id ?? '',
     task_name: row.task_name,
     task_type: row.task_type,
     max_iter: row.max_iter,
@@ -133,13 +157,13 @@ async function save() {
   }
 
   const base = {
-    case_id: form.case_id,
     task_name: form.task_name,
     task_type: form.task_type,
     max_iter: form.max_iter,
     input_params: inputParams,
     converge_criteria: convergeCriteria,
     proxy_model_id: form.proxy_model_id || null,
+    input_artifact_id: form.input_artifact_id || null,
     mesh_file_key: form.mesh_file_key || null,
     celery_task_id: form.celery_task_id || null,
   }
@@ -155,7 +179,7 @@ async function save() {
         error_msg: form.error_msg || null,
       })
     } else {
-      await api.create(base)
+      await api.create({ ...base, case_version_id: form.case_version_id })
     }
     ElMessage.success(isEdit.value ? '更新成功' : '创建成功')
     dialogVisible.value = false
@@ -167,8 +191,15 @@ async function save() {
 
 onMounted(async () => {
   await load()
-  const [casesResp, proxyResp] = await Promise.all([casesApi.list({ limit: 500 }), proxyApi.list({ limit: 500 })])
+  const [casesResp, versionsResp, artifactsResp, proxyResp] = await Promise.all([
+    casesApi.list({ limit: 500 }),
+    versionsApi.list({ limit: 500 }),
+    artifactsApi.list({ limit: 500 }),
+    proxyApi.list({ limit: 500 }),
+  ])
   cases.value = casesResp.data
+  versions.value = versionsResp.data
+  artifacts.value = artifactsResp.data
   proxies.value = proxyResp.data
 })
 </script>
@@ -176,8 +207,8 @@ onMounted(async () => {
 <template>
   <el-card shadow="never">
     <div class="toolbar">
-      <el-select v-model="filters.case_id" placeholder="所属算例" clearable filterable style="width: 200px">
-        <el-option v-for="c in cases" :key="c.id" :label="c.case_name" :value="c.id" />
+      <el-select v-model="filters.case_version_id" placeholder="所属算例版本" clearable filterable style="width: 240px">
+        <el-option v-for="v in versionOptions" :key="v.id" :label="v.label" :value="v.id" />
       </el-select>
       <el-select v-model="filters.status" placeholder="状态" clearable style="width: 140px">
         <el-option v-for="s in CFD_TASK_STATUS" :key="s" :label="CFD_STATUS_LABEL[s]" :value="s" />
@@ -190,10 +221,13 @@ onMounted(async () => {
 
     <el-table v-loading="loading" :data="items" border stripe>
       <el-table-column prop="id" label="ID" width="60" />
-      <el-table-column prop="task_name" label="任务名称" min-width="150" show-overflow-tooltip />
+      <el-table-column prop="task_name" label="任务名称" min-width="140" show-overflow-tooltip />
       <el-table-column prop="task_type" label="类型" width="90" />
-      <el-table-column label="所属算例" min-width="140" show-overflow-tooltip>
-        <template #default="{ row }">{{ caseMap[row.case_id] || row.case_id }}</template>
+      <el-table-column label="所属算例版本" min-width="160" show-overflow-tooltip>
+        <template #default="{ row }">{{ versionMap[row.case_version_id] || row.case_version_id }}</template>
+      </el-table-column>
+      <el-table-column label="上游产物" min-width="170" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.input_artifact_id ? artifactMap[row.input_artifact_id] || row.input_artifact_id : '-' }}</template>
       </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
@@ -222,7 +256,7 @@ onMounted(async () => {
       <el-table-column label="结束时间" width="165">
         <template #default="{ row }">{{ fmtTime(row.finished_at) }}</template>
       </el-table-column>
-      <el-table-column prop="error_msg" label="错误信息" min-width="120" show-overflow-tooltip>
+      <el-table-column prop="error_msg" label="错误信息" min-width="110" show-overflow-tooltip>
         <template #default="{ row }">{{ row.error_msg || '-' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="140" fixed="right">
@@ -248,9 +282,14 @@ onMounted(async () => {
 
   <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑任务' : '新建任务'" width="680px" destroy-on-close>
     <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
-      <el-form-item label="所属算例" prop="case_id">
-        <el-select v-model="form.case_id" filterable :disabled="isEdit" style="width: 320px" placeholder="选择算例">
-          <el-option v-for="c in cases" :key="c.id" :label="c.case_name" :value="c.id" />
+      <el-form-item label="所属算例版本" prop="case_version_id">
+        <el-select v-model="form.case_version_id" filterable :disabled="isEdit" style="width: 340px" placeholder="选择算例版本">
+          <el-option v-for="v in versionOptions" :key="v.id" :label="v.label" :value="v.id" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="上游产物">
+        <el-select v-model="form.input_artifact_id" filterable clearable style="width: 340px" placeholder="可选，引用其他版本产出的文件">
+          <el-option v-for="a in artifactOptions" :key="a.id" :label="a.label" :value="a.id" />
         </el-select>
       </el-form-item>
       <el-form-item label="任务名称" prop="task_name">

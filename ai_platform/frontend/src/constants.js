@@ -1,9 +1,13 @@
 // 状态/类型枚举与展示映射（与后端 app/schemas.py 的 Literal 定义保持一致）
 
-// 设计算例状态
-export const DESIGN_CASE_STATUS = ['draft', 'running', 'finished', 'archived']
-export const CASE_STATUS_LABEL = { draft: '草稿', running: '运行中', finished: '已完成', archived: '已归档' }
-export const CASE_STATUS_TAG = { draft: 'info', running: 'warning', finished: 'success', archived: 'info' }
+// 算例版本状态（design_cases 主档不再有状态，状态下沉到版本）
+export const CASE_VERSION_STATUS = ['draft', 'running', 'finished', 'archived']
+export const VERSION_STATUS_LABEL = { draft: '草稿', running: '运行中', finished: '已完成', archived: '已归档' }
+export const VERSION_STATUS_TAG = { draft: 'info', running: 'warning', finished: 'success', archived: 'info' }
+
+// 算例产物类型
+export const ARTIFACT_TYPES = ['mesh', 'result', 'weight', 'dataset', 'other']
+export const ARTIFACT_TYPE_LABEL = { mesh: '网格', result: '结果', weight: '权重', dataset: '数据集', other: '其他' }
 
 // CFD 任务状态
 export const CFD_TASK_STATUS = ['pending', 'running', 'success', 'failed', 'stop']

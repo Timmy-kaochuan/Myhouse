@@ -1,4 +1,4 @@
-"""CFD 迭代计算任务表。"""
+"""CFD 迭代计算任务表：归属算例版本，可引用上游产物作为输入。"""
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, Text
@@ -21,11 +21,17 @@ class CfdTask(Base):
     __table_args__ = {"comment": "CFD 迭代计算任务表"}
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="主键")
-    case_id: Mapped[int] = mapped_column(
-        ForeignKey("design_cases.id", ondelete="CASCADE"),
+    case_version_id: Mapped[int] = mapped_column(
+        ForeignKey("case_versions.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
-        comment="所属设计算例ID -> design_cases.id",
+        comment="所属算例版本ID -> case_versions.id",
+    )
+    input_artifact_id: Mapped[int | None] = mapped_column(
+        ForeignKey("case_artifacts.id", ondelete="SET NULL"),
+        index=True,
+        default=None,
+        comment="上游产物ID(输入来源) -> case_artifacts.id，可空",
     )
     task_name: Mapped[str] = mapped_column(String(200), nullable=False, comment="任务名称")
     task_type: Mapped[str] = mapped_column(
@@ -80,7 +86,8 @@ class CfdTask(Base):
     )
 
     # 多对一
-    design_case: Mapped["DesignCase"] = relationship(back_populates="cfd_tasks")
+    case_version: Mapped["CaseVersion"] = relationship(back_populates="cfd_tasks")
+    input_artifact: Mapped["CaseArtifact | None"] = relationship()
     proxy_model: Mapped["ProxyModel | None"] = relationship(back_populates="cfd_tasks")
 
     # cfd_task -> experiment_record 一对多：删除任务级联删除实验记录

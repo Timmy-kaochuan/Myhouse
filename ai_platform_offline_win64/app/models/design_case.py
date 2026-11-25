@@ -1,43 +1,32 @@
-"""设计算例表：一次重型燃机设计优化任务的顶层容器。"""
+"""设计算例主档表：一次设计优化任务的顶层容器。
+
+主档只管"身份"（名称/描述/归属），具体设计参数与运行状态
+下沉到 case_versions 版本表；CFD 任务与产物归属版本。
+"""
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, JSONField, utc_now
-
-# 算例状态常量
-CASE_STATUS_DRAFT = "draft"
-CASE_STATUS_RUNNING = "running"
-CASE_STATUS_FINISHED = "finished"
-CASE_STATUS_ARCHIVED = "archived"
+from app.db.base import Base, utc_now
 
 
 class DesignCase(Base):
-    """设计算例。"""
+    """设计算例主档（版本化后的顶层容器）。"""
 
     __tablename__ = "design_cases"
-    __table_args__ = {"comment": "设计算例表"}
+    __table_args__ = {"comment": "设计算例主档表"}
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="主键")
     case_name: Mapped[str] = mapped_column(
         String(200), index=True, nullable=False, comment="算例名称"
     )
-    case_version: Mapped[str] = mapped_column(
-        String(50), default="v1", server_default="v1", nullable=False, comment="算例版本"
-    )
     description: Mapped[str | None] = mapped_column(Text, default=None, comment="算例描述")
-    design_parameters: Mapped[dict | None] = mapped_column(
-        JSONField,
+    parent_case_id: Mapped[int | None] = mapped_column(
+        ForeignKey("design_cases.id", ondelete="SET NULL"),
+        index=True,
         default=None,
-        comment="设计参数(JSON)：如压比、流量、涡轮进口温度等设计变量向量",
-    )
-    status: Mapped[str] = mapped_column(
-        String(20),
-        default=CASE_STATUS_DRAFT,
-        server_default=CASE_STATUS_DRAFT,
-        nullable=False,
-        comment="状态: draft/running/finished/archived",
+        comment="父算例ID(衍生/复制来源) -> design_cases.id，可空",
     )
     creator_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -59,8 +48,8 @@ class DesignCase(Base):
     # 多对一
     creator: Mapped["User"] = relationship(back_populates="design_cases")
 
-    # design_case -> cfd_task / agent_run 一对多：删除算例级联删除子记录
-    cfd_tasks: Mapped[list["CfdTask"]] = relationship(
+    # design_case -> case_version / agent_run 一对多：删除主档级联删除子记录
+    versions: Mapped[list["CaseVersion"]] = relationship(
         back_populates="design_case",
         cascade="all, delete-orphan",
         passive_deletes=True,

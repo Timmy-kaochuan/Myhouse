@@ -18,13 +18,19 @@ from app.schemas import (
     AgentRunOut,
     AgentRunStatus,
     AgentRunUpdate,
+    CaseArtifactCreate,
+    CaseArtifactOut,
+    CaseArtifactUpdate,
+    CaseVersionCreate,
+    CaseVersionOut,
+    CaseVersionStatus,
+    CaseVersionUpdate,
     CfdTaskCreate,
     CfdTaskOut,
     CfdTaskStatus,
     CfdTaskUpdate,
     DesignCaseCreate,
     DesignCaseOut,
-    DesignCaseStatus,
     DesignCaseUpdate,
     ExperimentRecordCreate,
     ExperimentRecordOut,
@@ -106,12 +112,14 @@ async def delete_user(user_id: int, session: DbSession) -> None:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "user not found")
 
 
-# ==================== DesignCase ====================
+# ==================== DesignCase（主档） ====================
 @router.post("/design-cases", response_model=DesignCaseOut, status_code=http_status.HTTP_201_CREATED, tags=["design-cases"])
 async def create_design_case(payload: DesignCaseCreate, session: DbSession) -> DesignCaseOut:
-    """创建设计算例。"""
+    """创建设计算例主档（自动生成默认 v1 版本，可带初始设计参数）。"""
     if await crud.get_user(session, payload.creator_id) is None:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "creator(user) not found")
+    if payload.parent_case_id is not None and await crud.get_design_case(session, payload.parent_case_id) is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "parent design case not found")
     return await crud.create_design_case(session, **payload.model_dump())
 
 
@@ -121,17 +129,14 @@ async def list_design_cases(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     creator_id: int | None = None,
-    status: DesignCaseStatus | None = None,
 ) -> Sequence[DesignCaseOut]:
-    """分页查询算例，可按创建人/状态过滤。"""
-    return await crud.list_design_cases(
-        session, offset=offset, limit=limit, creator_id=creator_id, status=status
-    )
+    """分页查询算例主档，可按创建人过滤。"""
+    return await crud.list_design_cases(session, offset=offset, limit=limit, creator_id=creator_id)
 
 
 @router.get("/design-cases/{case_id}", response_model=DesignCaseOut, tags=["design-cases"])
 async def get_design_case(case_id: int, session: DbSession) -> DesignCaseOut:
-    """查询单个算例。"""
+    """查询单个算例主档。"""
     case = await crud.get_design_case(session, case_id)
     if case is None:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "design case not found")
@@ -140,7 +145,12 @@ async def get_design_case(case_id: int, session: DbSession) -> DesignCaseOut:
 
 @router.patch("/design-cases/{case_id}", response_model=DesignCaseOut, tags=["design-cases"])
 async def update_design_case(case_id: int, payload: DesignCaseUpdate, session: DbSession) -> DesignCaseOut:
-    """部分更新算例（updated_at 自动刷新）。"""
+    """部分更新算例主档（updated_at 自动刷新）。"""
+    if payload.parent_case_id is not None:
+        if payload.parent_case_id == case_id:
+            raise HTTPException(http_status.HTTP_409_CONFLICT, "parent case cannot be itself")
+        if await crud.get_design_case(session, payload.parent_case_id) is None:
+            raise HTTPException(http_status.HTTP_404_NOT_FOUND, "parent design case not found")
     case = await crud.update_design_case(session, case_id, payload.model_dump(exclude_unset=True))
     if case is None:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "design case not found")
@@ -149,19 +159,151 @@ async def update_design_case(case_id: int, payload: DesignCaseUpdate, session: D
 
 @router.delete("/design-cases/{case_id}", status_code=http_status.HTTP_204_NO_CONTENT, tags=["design-cases"])
 async def delete_design_case(case_id: int, session: DbSession) -> None:
-    """删除算例（级联删除 CFD 任务与智能体运行记录）。"""
+    """删除算例主档（级联删除其版本、产物、CFD 任务与智能体运行记录）。"""
     if not await crud.delete_design_case(session, case_id):
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "design case not found")
+
+
+# ==================== CaseVersion ====================
+@router.post("/case-versions", response_model=CaseVersionOut, status_code=http_status.HTTP_201_CREATED, tags=["case-versions"])
+async def create_case_version(payload: CaseVersionCreate, session: DbSession) -> CaseVersionOut:
+    """在算例下创建新版本（同算例内版本号唯一）。"""
+    if await crud.get_design_case(session, payload.case_id) is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "design case not found")
+    if await crud.get_version_by_no(session, payload.case_id, payload.version_no):
+        raise HTTPException(http_status.HTTP_409_CONFLICT, "version_no already exists in this case")
+    return await crud.create_case_version(session, **payload.model_dump())
+
+
+@router.get("/case-versions", response_model=list[CaseVersionOut], tags=["case-versions"])
+async def list_case_versions(
+    session: DbSession,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    case_id: int | None = None,
+    status: CaseVersionStatus | None = None,
+) -> Sequence[CaseVersionOut]:
+    """分页查询算例版本，可按算例/状态过滤。"""
+    return await crud.list_case_versions(
+        session, offset=offset, limit=limit, case_id=case_id, status=status
+    )
+
+
+@router.get("/case-versions/{version_id}", response_model=CaseVersionOut, tags=["case-versions"])
+async def get_case_version(version_id: int, session: DbSession) -> CaseVersionOut:
+    """查询单个算例版本。"""
+    version = await crud.get_case_version(session, version_id)
+    if version is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case version not found")
+    return version
+
+
+@router.patch("/case-versions/{version_id}", response_model=CaseVersionOut, tags=["case-versions"])
+async def update_case_version(version_id: int, payload: CaseVersionUpdate, session: DbSession) -> CaseVersionOut:
+    """部分更新版本（状态、设计参数、版本号等）。"""
+    version = await crud.get_case_version(session, version_id)
+    if version is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case version not found")
+    values = payload.model_dump(exclude_unset=True)
+    new_no = values.get("version_no")
+    if new_no is not None and new_no != version.version_no:
+        if await crud.get_version_by_no(session, version.case_id, new_no):
+            raise HTTPException(http_status.HTTP_409_CONFLICT, "version_no already exists in this case")
+    return await crud.update_case_version(session, version_id, values)
+
+
+@router.delete("/case-versions/{version_id}", status_code=http_status.HTTP_204_NO_CONTENT, tags=["case-versions"])
+async def delete_case_version(version_id: int, session: DbSession) -> None:
+    """删除版本（级联删除其产物与 CFD 任务）。"""
+    if not await crud.delete_case_version(session, version_id):
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case version not found")
+
+
+@router.get("/case-versions/{version_id}/upstream", response_model=list[CaseVersionOut], tags=["case-versions"])
+async def get_case_version_upstream(version_id: int, session: DbSession) -> Sequence[CaseVersionOut]:
+    """查询某版本的全部上游版本（沿"消费->生产"依赖边，含传递依赖）。"""
+    version = await crud.get_case_version(session, version_id)
+    if version is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case version not found")
+    ids = await crud.get_upstream_version_ids(session, version_id)
+    versions = [await crud.get_case_version(session, vid) for vid in ids]
+    return [v for v in versions if v is not None]
+
+
+@router.get("/case-versions/{version_id}/downstream", response_model=list[CaseVersionOut], tags=["case-versions"])
+async def get_case_version_downstream(version_id: int, session: DbSession) -> Sequence[CaseVersionOut]:
+    """查询某版本的全部下游版本（沿"生产->消费"反向依赖边，含传递依赖）。"""
+    version = await crud.get_case_version(session, version_id)
+    if version is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case version not found")
+    ids = await crud.get_downstream_version_ids(session, version_id)
+    versions = [await crud.get_case_version(session, vid) for vid in ids]
+    return [v for v in versions if v is not None]
+
+
+# ==================== CaseArtifact ====================
+@router.post("/case-artifacts", response_model=CaseArtifactOut, status_code=http_status.HTTP_201_CREATED, tags=["case-artifacts"])
+async def create_case_artifact(payload: CaseArtifactCreate, session: DbSession) -> CaseArtifactOut:
+    """登记算例产物（文件本体在 MinIO，接口只收对象 key）。"""
+    if await crud.get_case_version(session, payload.case_version_id) is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case version not found")
+    return await crud.create_case_artifact(session, **payload.model_dump())
+
+
+@router.get("/case-artifacts", response_model=list[CaseArtifactOut], tags=["case-artifacts"])
+async def list_case_artifacts(
+    session: DbSession,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    case_version_id: int | None = None,
+    artifact_type: str | None = None,
+) -> Sequence[CaseArtifactOut]:
+    """分页查询产物，可按版本/类型过滤。"""
+    return await crud.list_case_artifacts(
+        session, offset=offset, limit=limit, case_version_id=case_version_id, artifact_type=artifact_type
+    )
+
+
+@router.get("/case-artifacts/{artifact_id}", response_model=CaseArtifactOut, tags=["case-artifacts"])
+async def get_case_artifact(artifact_id: int, session: DbSession) -> CaseArtifactOut:
+    """查询单个产物登记。"""
+    artifact = await crud.get_case_artifact(session, artifact_id)
+    if artifact is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case artifact not found")
+    return artifact
+
+
+@router.patch("/case-artifacts/{artifact_id}", response_model=CaseArtifactOut, tags=["case-artifacts"])
+async def update_case_artifact(artifact_id: int, payload: CaseArtifactUpdate, session: DbSession) -> CaseArtifactOut:
+    """部分更新产物登记（类型、对象 key、说明等）。"""
+    artifact = await crud.update_case_artifact(session, artifact_id, payload.model_dump(exclude_unset=True))
+    if artifact is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case artifact not found")
+    return artifact
+
+
+@router.delete("/case-artifacts/{artifact_id}", status_code=http_status.HTTP_204_NO_CONTENT, tags=["case-artifacts"])
+async def delete_case_artifact(artifact_id: int, session: DbSession) -> None:
+    """删除产物登记（引用它的 CFD 任务的 input_artifact_id 由数据库置空）。"""
+    if not await crud.delete_case_artifact(session, artifact_id):
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case artifact not found")
 
 
 # ==================== CfdTask ====================
 @router.post("/cfd-tasks", response_model=CfdTaskOut, status_code=http_status.HTTP_201_CREATED, tags=["cfd-tasks"])
 async def create_cfd_task(payload: CfdTaskCreate, session: DbSession) -> CfdTaskOut:
-    """创建 CFD 迭代任务。"""
-    if await crud.get_design_case(session, payload.case_id) is None:
-        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "design case not found")
+    """创建 CFD 迭代任务（归属算例版本，可选引用上游产物）。"""
+    if await crud.get_case_version(session, payload.case_version_id) is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case version not found")
     if payload.proxy_model_id is not None and await crud.get_proxy_model(session, payload.proxy_model_id) is None:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "proxy model not found")
+    if payload.input_artifact_id is not None:
+        if await crud.get_case_artifact(session, payload.input_artifact_id) is None:
+            raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case artifact not found")
+        if await crud.artifact_creates_cycle(
+            session, version_id=payload.case_version_id, input_artifact_id=payload.input_artifact_id
+        ):
+            raise HTTPException(http_status.HTTP_409_CONFLICT, "input artifact would create a dependency cycle")
     return await crud.create_cfd_task(session, **payload.model_dump())
 
 
@@ -170,13 +312,13 @@ async def list_cfd_tasks(
     session: DbSession,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
-    case_id: int | None = None,
+    case_version_id: int | None = None,
     proxy_model_id: int | None = None,
     status: CfdTaskStatus | None = None,
 ) -> Sequence[CfdTaskOut]:
-    """分页查询 CFD 任务，可按算例/代理模型/状态过滤。"""
+    """分页查询 CFD 任务，可按算例版本/代理模型/状态过滤。"""
     return await crud.list_cfd_tasks(
-        session, offset=offset, limit=limit, case_id=case_id, proxy_model_id=proxy_model_id, status=status
+        session, offset=offset, limit=limit, case_version_id=case_version_id, proxy_model_id=proxy_model_id, status=status
     )
 
 
@@ -191,8 +333,19 @@ async def get_cfd_task(task_id: int, session: DbSession) -> CfdTaskOut:
 
 @router.patch("/cfd-tasks/{task_id}", response_model=CfdTaskOut, tags=["cfd-tasks"])
 async def update_cfd_task(task_id: int, payload: CfdTaskUpdate, session: DbSession) -> CfdTaskOut:
-    """更新任务：迭代进度、结果、状态流转、MinIO key 等。"""
-    task = await crud.update_cfd_task(session, task_id, payload.model_dump(exclude_unset=True))
+    """更新任务：迭代进度、结果、状态流转、上游产物、MinIO key 等。"""
+    values = payload.model_dump(exclude_unset=True)
+    if values.get("input_artifact_id") is not None:
+        if await crud.get_case_artifact(session, values["input_artifact_id"]) is None:
+            raise HTTPException(http_status.HTTP_404_NOT_FOUND, "case artifact not found")
+        if await crud.artifact_creates_cycle(
+            session,
+            version_id=(await crud.get_cfd_task(session, task_id)).case_version_id,
+            input_artifact_id=values["input_artifact_id"],
+            exclude_task_id=task_id,
+        ):
+            raise HTTPException(http_status.HTTP_409_CONFLICT, "input artifact would create a dependency cycle")
+    task = await crud.update_cfd_task(session, task_id, values)
     if task is None:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "cfd task not found")
     return task
