@@ -1,0 +1,10 @@
+# 离线部署依赖清单（版本与开发环境一致）
+# 安装方式（目标机无需联网）：
+#   python -m pip install --no-index --find-links wheels -r requirements.txt
+fastapi==0.141.1
+uvicorn==0.44.0
+sqlalchemy[asyncio]==2.0.51
+aiosqlite==0.21.0
+alembic==1.19.1
+asyncpg==0.32.0
+pydantic==2.13.4
