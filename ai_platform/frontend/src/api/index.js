@@ -1,8 +1,8 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
-// axios 实例：vite dev 代理把 /api 转发到 FastAPI 后端
-const http = axios.create({ baseURL: '/api', timeout: 20000 })
+// axios 实例：vite dev 代理把 /api 转发到 FastAPI 后端（导出供自定义动作调用，如 /predict）
+export const http = axios.create({ baseURL: '/api', timeout: 20000 })
 
 // 统一错误提示：FastAPI 的 detail 是字符串，其余按 HTTP 状态码提示
 http.interceptors.response.use(

@@ -19,11 +19,12 @@ async def create_proxy_model(
     model_version: str = "v1",
     metric: dict | None = None,
     weight_key: str | None = None,
+    weights_json: dict | None = None,
     train_dataset_key: str | None = None,
     description: str | None = None,
     status: str = PM_STATUS_DRAFT,
 ) -> ProxyModel:
-    """创建代理模型记录（权重/数据集只存 MinIO key）。"""
+    """创建代理模型记录（大权重存 MinIO key，小权重可内嵌 weights_json）。"""
     model = ProxyModel(
         model_name=model_name,
         model_type=model_type,
@@ -32,6 +33,7 @@ async def create_proxy_model(
         model_version=model_version,
         metric=metric,
         weight_key=weight_key,
+        weights_json=weights_json,
         train_dataset_key=train_dataset_key,
         description=description,
         status=status,

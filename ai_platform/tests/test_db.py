@@ -9,6 +9,7 @@ from app import crud
 from app.db.base import Base
 from app.main import app
 from app.models import CaseVersion, User
+from app.services.predictor import PredictorUnavailable, predict
 
 
 def test_user_roundtrip() -> None:
@@ -94,6 +95,70 @@ def test_case_version_and_artifact_flow() -> None:
             assert await crud.artifact_creates_cycle(session, version_id=v2.id, input_artifact_id=result_v2.id)
             assert await crud.artifact_creates_cycle(session, version_id=v1.id, input_artifact_id=result_v2.id)
             assert not await crud.artifact_creates_cycle(session, version_id=v2.id, input_artifact_id=mesh.id)
+
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_multi_fidelity_records_and_predict() -> None:
+    """试验/仿真双来源样本入库规则 + 内嵌权重线性预测。"""
+
+    async def run() -> None:
+        engine = create_async_engine(
+            "sqlite+aiosqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            user = User(email="test@example.com", display_name="Test")
+            session.add(user)
+            await session.commit()
+            case = await crud.create_design_case(session, case_name="算例", creator_id=user.id)
+            version = await crud.get_version_by_no(session, case.id, "v1")
+            task = await crud.create_cfd_task(session, case_version_id=version.id, task_name="t", task_type="flow")
+
+            # 仿真样本：挂任务
+            sim = await crud.create_experiment_record(
+                session, source="sim", sample_tag="low_fid", cfd_task_id=task.id,
+                input_x=[1.0, 2.0], output_y_true=[3.0],
+            )
+            assert sim.source == "sim" and sim.cfd_task_id == task.id
+
+            # 试验样本：不挂任务，登记数据文件 key + 更大权重
+            test = await crud.create_experiment_record(
+                session, source="test", sample_tag="high_fid", weight=1.0,
+                test_data_key="tests/rig01/run002.csv", input_x=[1.0, 2.0], output_y_true=[3.1],
+            )
+            assert test.cfd_task_id is None and test.source == "test" and test.weight == 1.0
+
+            # 内嵌线性权重预测
+            model = await crud.create_proxy_model(
+                session, model_name="线性代理", model_type="mlp", input_dim=2, output_dim=1,
+                status="ready", weights_json={"type": "linear", "coef": [1.2, 0.8], "intercept": 0.5},
+            )
+            y, src = predict(model, [1.0, 2.0])
+            assert y == [3.3] and src == "inline"
+
+            # 维度不匹配 / 无权重 → 明确报错
+            try:
+                predict(model, [1.0])
+                raise AssertionError("should raise")
+            except PredictorUnavailable as exc:
+                assert "维度不匹配" in str(exc)
+            no_weight = await crud.create_proxy_model(
+                session, model_name="无权重", model_type="kriging", input_dim=1, output_dim=1,
+                status="ready", weight_key="minio://kriging.pkl",
+            )
+            try:
+                predict(no_weight, [1.0])
+                raise AssertionError("should raise")
+            except PredictorUnavailable as exc:
+                assert "MinIO" in str(exc)
 
         await engine.dispose()
 

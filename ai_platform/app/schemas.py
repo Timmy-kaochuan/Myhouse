@@ -18,6 +18,7 @@ ProxyModelType = Literal["kriging", "gp", "mlp", "mf_adaptive"]  # mf_adaptive=�
 ProxyModelStatus = Literal["draft", "training", "ready", "failed"]
 AgentRunStatus = Literal["pending", "running", "success", "failed"]
 SampleTag = Literal["high_fid", "low_fid"]
+RecordSource = Literal["sim", "test"]  # sim=仿真(低保真) test=试验(高保真)
 
 # JSON 字段类型别名
 JsonDict = dict[str, Any]
@@ -197,6 +198,7 @@ class ProxyModelCreate(BaseModel):
     output_dim: int = Field(ge=1)
     metric: JsonDict | None = None
     weight_key: str | None = Field(default=None, max_length=500)
+    weights_json: JsonDict | None = None
     train_dataset_key: str | None = Field(default=None, max_length=500)
     description: str | None = None
     status: ProxyModelStatus = "draft"
@@ -210,6 +212,7 @@ class ProxyModelUpdate(BaseModel):
     output_dim: int | None = Field(default=None, ge=1)
     metric: JsonDict | None = None
     weight_key: str | None = Field(default=None, max_length=500)
+    weights_json: JsonDict | None = None
     train_dataset_key: str | None = Field(default=None, max_length=500)
     description: str | None = None
     status: ProxyModelStatus | None = None
@@ -226,10 +229,22 @@ class ProxyModelOut(BaseModel):
     output_dim: int
     metric: JsonDict | None
     weight_key: str | None
+    weights_json: JsonDict | None
     train_dataset_key: str | None
     description: str | None
     status: str
     created_at: datetime
+
+
+class ProxyModelPredictIn(BaseModel):
+    input_x: list[float] = Field(min_length=1, description="输入向量，长度须等于模型 input_dim")
+
+
+class ProxyModelPredictOut(BaseModel):
+    model_id: int
+    input_x: list[float]
+    output_y: list[float]
+    weight_source: str  # inline=内嵌权重 / file=权重文件(待接入对象存储)
 
 
 # ==================== AgentRun ====================
@@ -272,8 +287,11 @@ class AgentRunOut(BaseModel):
 
 # ==================== ExperimentRecord ====================
 class ExperimentRecordCreate(BaseModel):
-    cfd_task_id: int
+    cfd_task_id: int | None = None
+    source: RecordSource = "sim"
     sample_tag: SampleTag
+    weight: float | None = Field(default=None, ge=0, description="训练权重；试验样本通常给更大值")
+    test_data_key: str | None = Field(default=None, max_length=500, description="来源为试验时必填：原始试验数据文件 key")
     input_x: JsonVector | None = None
     output_y_true: JsonVector | None = None
     output_y_pred: JsonVector | None = None
@@ -283,6 +301,8 @@ class ExperimentRecordCreate(BaseModel):
 
 class ExperimentRecordUpdate(BaseModel):
     sample_tag: SampleTag | None = None
+    weight: float | None = Field(default=None, ge=0)
+    test_data_key: str | None = Field(default=None, max_length=500)
     input_x: JsonVector | None = None
     output_y_true: JsonVector | None = None
     output_y_pred: JsonVector | None = None
@@ -294,8 +314,11 @@ class ExperimentRecordOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    cfd_task_id: int
+    cfd_task_id: int | None
+    source: str
     sample_tag: str
+    weight: float | None
+    test_data_key: str | None
     input_x: JsonVector | None
     output_y_true: JsonVector | None
     output_y_pred: JsonVector | None

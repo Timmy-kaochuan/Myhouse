@@ -37,15 +37,20 @@ from app.schemas import (
     ExperimentRecordUpdate,
     ProxyModelCreate,
     ProxyModelOut,
+    ProxyModelPredictIn,
+    ProxyModelPredictOut,
     ProxyModelStatus,
     ProxyModelType,
     ProxyModelUpdate,
+    RecordSource,
     Role,
     SampleTag,
     UserCreate,
     UserOut,
     UserUpdate,
 )
+from app.services import predictor
+from app.services.predictor import PredictorUnavailable
 
 router = APIRouter()
 
@@ -404,6 +409,26 @@ async def delete_proxy_model(model_id: int, session: DbSession) -> None:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "proxy model not found")
 
 
+@router.post("/proxy-models/{model_id}/predict", response_model=ProxyModelPredictOut, tags=["proxy-models"])
+async def predict_proxy_model(model_id: int, payload: ProxyModelPredictIn, session: DbSession) -> ProxyModelPredictOut:
+    """代理模型推理（供工具链/智能体调用）：优先内嵌权重，权重文件后端接入后自动可用。"""
+    model = await crud.get_proxy_model(session, model_id)
+    if model is None:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "proxy model not found")
+    if model.status != "ready":
+        raise HTTPException(http_status.HTTP_409_CONFLICT, f"model is not ready (status={model.status})")
+    if len(payload.input_x) != model.input_dim:
+        raise HTTPException(
+            http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"input_x length {len(payload.input_x)} != model input_dim {model.input_dim}",
+        )
+    try:
+        output_y, weight_source = predictor.predict(model, payload.input_x)
+    except PredictorUnavailable as exc:
+        raise HTTPException(http_status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+    return ProxyModelPredictOut(model_id=model.id, input_x=payload.input_x, output_y=output_y, weight_source=weight_source)
+
+
 # ==================== AgentRun ====================
 @router.post("/agent-runs", response_model=AgentRunOut, status_code=http_status.HTTP_201_CREATED, tags=["agent-runs"])
 async def create_agent_run(payload: AgentRunCreate, session: DbSession) -> AgentRunOut:
@@ -456,9 +481,15 @@ async def delete_agent_run(run_id: int, session: DbSession) -> None:
 # ==================== ExperimentRecord ====================
 @router.post("/experiment-records", response_model=ExperimentRecordOut, status_code=http_status.HTTP_201_CREATED, tags=["experiment-records"])
 async def create_experiment_record(payload: ExperimentRecordCreate, session: DbSession) -> ExperimentRecordOut:
-    """创建保真样本实验记录。"""
-    if await crud.get_cfd_task(session, payload.cfd_task_id) is None:
-        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "cfd task not found")
+    """创建保真样本记录：仿真样本(sim)须挂 CFD 任务；试验样本(test)须登记原始数据文件 key。"""
+    if payload.source == "sim":
+        if payload.cfd_task_id is None:
+            raise HTTPException(http_status.HTTP_422_UNPROCESSABLE_ENTITY, "source=sim requires cfd_task_id")
+        if await crud.get_cfd_task(session, payload.cfd_task_id) is None:
+            raise HTTPException(http_status.HTTP_404_NOT_FOUND, "cfd task not found")
+    else:  # test：高保真试验数据，不依赖 CFD 任务
+        if not payload.test_data_key:
+            raise HTTPException(http_status.HTTP_422_UNPROCESSABLE_ENTITY, "source=test requires test_data_key")
     return await crud.create_experiment_record(session, **payload.model_dump())
 
 
@@ -468,12 +499,19 @@ async def list_experiment_records(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     cfd_task_id: int | None = None,
+    source: RecordSource | None = None,
     sample_tag: SampleTag | None = None,
     mlflow_run_id: str | None = None,
 ) -> Sequence[ExperimentRecordOut]:
-    """分页查询实验记录，可按任务/保真度/run_id 过滤。"""
+    """分页查询实验记录，可按任务/来源/保真度/run_id 过滤。"""
     return await crud.list_experiment_records(
-        session, offset=offset, limit=limit, cfd_task_id=cfd_task_id, sample_tag=sample_tag, mlflow_run_id=mlflow_run_id
+        session,
+        offset=offset,
+        limit=limit,
+        cfd_task_id=cfd_task_id,
+        source=source,
+        sample_tag=sample_tag,
+        mlflow_run_id=mlflow_run_id,
     )
 
 

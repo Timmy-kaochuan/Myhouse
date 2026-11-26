@@ -43,6 +43,11 @@ class ProxyModel(Base):
     weight_key: Mapped[str | None] = mapped_column(
         String(500), default=None, comment="MinIO 模型权重文件对象key，二进制不入库"
     )
+    weights_json: Mapped[dict | None] = mapped_column(
+        JSONField,
+        default=None,
+        comment="内嵌小权重(JSON)：如 {type: linear, coef: [...], intercept: 0}，供 /predict 直接推理；大权重仍走 weight_key",
+    )
     train_dataset_key: Mapped[str | None] = mapped_column(
         String(500), default=None, comment="MinIO 训练数据集文件对象key，二进制不入库"
     )
